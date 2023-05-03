@@ -503,3 +503,57 @@ spec:
             path: /dev
             type: Directory
           name: dev-dir
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  annotations:
+    cert-manager.io/inject-ca-from: CERT_NAMESPACE/CERT_NAME
+  labels:
+    app.kubernetes.io/part-of: cbt-kubebuilder
+  name: cbt-datapath-mutating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: cbt-datapath-webhook-service
+      namespace: default
+      path: /mutate-csisnapshotsessionaccess
+      port: 443
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  name: vvolumesnapshotdeltatoken.kb.io
+  namespaceSelector: {}
+  objectSelector: {}
+  reinvocationPolicy: Never
+  rules:
+  - apiGroups:
+    - cbt.storage.k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    resources:
+    - csisnapshotsessionaccesses
+    scope: '*'
+  sideEffects: None
+  timeoutSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+  labels:
+    app.kubernetes.io/part-of: cbt-datapath
+  name: cbt-datapath-webhook-service
+  namespace: default
+spec:
+  ports:
+  - port: 443
+    protocol: TCP
+    targetPort: 9443
+  selector:
+    app.kubernetes.io/name: csi-hostpathplugin
+  sessionAffinity: None
+  type: ClusterIP
