@@ -12,6 +12,63 @@ metadata:
     app.kubernetes.io/component: serviceaccount
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ext-snap-session-access-role
+rules:
+- apiGroups:
+  - cbt.storage.k8s.io
+  resources:
+  - csisnapshotsessionaccesses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - cbt.storage.k8s.io
+  resources:
+  - csisnapshotsessionaccesses/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - cbt.storage.k8s.io
+  resources:
+  - csisnapshotsessionaccesses/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrolebinding
+    app.kubernetes.io/instance: ext-snap-session-access-rolebinding
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: cbt-datapath
+    app.kubernetes.io/part-of: cbt-datapath
+  name: ext-snap-session-access-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ext-snap-session-access-role
+subjects:
+- kind: ServiceAccount
+  name: csi-hostpathplugin-sa
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   labels:
@@ -217,8 +274,54 @@ spec:
     spec:
       serviceAccountName: csi-hostpathplugin-sa
       containers:
+        - command:
+          - /manager
+          args:
+          - --leader-elect
+          image: prasadg193/cbt-datapath:latest
+          name: ext-snap-session-access
+          volumeMounts:
+            - mountPath: /csi
+              name: socket-dir
+            - mountPath: /datapath/certificates/ca
+              name: cbt-ca-cert
+              readOnly: true
+            - mountPath: /tmp/k8s-webhook-server/serving-certs
+              name: cert
+              readOnly: true
+          env:
+            - name: EXT_SNAP_SESSION_SVC_URL
+              value: "external-snapshot-session-service.default:80"
+            - name: CSI_ENDPOINT
+              value: /csi/csi.sock
+            - name: CBT_SERVER_CA_BUNDLE
+              value: /datapath/certificates/ca/ca.crt
+          securityContext:
+            # This is necessary only for systems with SELinux, where
+            # non-privileged sidecar containers cannot access unix domain socket
+            # created by privileged CSI driver container.
+            privileged: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 500m
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 64Mi
         - name: hostpath
-          image: registry.k8s.io/sig-storage/hostpathplugin:v1.9.0
+          image: prasadg193/hostpathplugin:latest
           args:
             - "--drivername=hostpath.csi.k8s.io"
             - "--v=5"
@@ -367,6 +470,13 @@ spec:
               name: socket-dir
 
       volumes:
+        - name: cbt-ca-cert
+          secret:
+            secretName: cbt-svc-ca-cert
+        - name: cert
+          secret:
+            defaultMode: 420
+            secretName: validate-cbt-certificate
         - hostPath:
             path: /var/lib/kubelet/plugins/csi-hostpath
             type: DirectoryOrCreate
