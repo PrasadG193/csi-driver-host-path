@@ -218,13 +218,38 @@ spec:
     spec:
       serviceAccountName: csi-hostpathplugin-sa
       containers:
+        - name: csi-snapshot-metadata
+          # TODO: Replace with build image once CI process is set
+          image: prasadg193/csi-snapshot-metadata:amd64-linux-canary
+          imagePullPolicy: "Always"
+          command:
+          args:
+          - "--csi-address=/csi/csi.sock"
+          - "--tls-cert=/tmp/certificates/tls.crt"
+          - "--tls-key=/tmp/certificates/tls.key"
+          readinessProbe:
+            exec:
+              command:
+              - "/bin/grpc_health_probe"
+              - "-addr=:50051"
+              - "-tls"
+              - "-tls-no-verify"
+            initialDelaySeconds: 5
+          volumeMounts:
+            - mountPath: /csi
+              name: socket-dir
+            - name: server-certs
+              mountPath: /tmp/certificates
+              readOnly: true
         - name: hostpath
-          image: registry.k8s.io/sig-storage/hostpathplugin:v1.14.1
+          image: prasadg193/hostpathplugin:amd64-linux-canary
+          imagePullPolicy: "Always"
           args:
             - "--drivername=hostpath.csi.k8s.io"
             - "--v=5"
             - "--endpoint=$(CSI_ENDPOINT)"
             - "--nodeid=$(KUBE_NODE_NAME)"
+            - "--enable-snapshot-metadata"
           env:
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock
@@ -394,3 +419,6 @@ spec:
             path: /dev
             type: Directory
           name: dev-dir
+        - name: server-certs
+          secret:
+            secretName: csi-hostpathplugin-certs
